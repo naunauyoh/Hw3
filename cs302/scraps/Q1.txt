@@ -1,0 +1,52 @@
+Syntax Errors :
+1.File "COMP302/hw1-fixme.ml", line 12, characters 30-32:
+  Error: Syntax error
+  The word "of" was written instead of "with"in "match n with".
+  We replaced "of" by "with".
+
+2.File "COMP302/hw1-fixme.ml", line 13, characters 6-8:
+  Error: Syntax error
+  The arrow was mistyped : "=>" instead of "->", we modified it.
+
+3.File "COMP302/hw1-fixme.ml", line 14, characters 6-8:
+  Error: Syntax error
+  The arrow was mistyped : "=>" instead of "->", we modified it.
+  
+4.File "COMP302/hw1-fixme.ml", line 31, characters 4-5:
+  Error: Syntax error
+  The "|" was missing before the statement, we add it.
+
+5.File "COMP302/hw1-fixme.ml", line 12, characters 28-29:
+  Error: Unbound value n
+  n is not decared as a function variable, so we declare it as (n:int).
+
+
+6.File "COMP302/hw1-fixme.ml", line 14, characters 15-18:
+  Error: Unbound value inc
+  Did you mean incr or int?
+  The function is supposed to be recursive but has not been defined  	as it. We correct this by adding "rec".
+
+7.File "COMP302/hw1-fixme.ml", line 30, characters 15-24:
+  Error: Unbound value factorial
+  Here the function is called factorial but it should have beed named  	 fact. We correct this by replacing "factorial" by "fact".
+
+
+Type Errors :
+1.File "COMP302/hw1-fixme.ml", line 14, characters 14-27:
+  Error: This expression has type int -> int -> int
+  but an expression was expected of type int
+  First we put an alone "int" word in the function declaration which  	we should delete.Since we have modified the declaration of the      	function we should modify it where we call it. Moreover the returned 	 value is false, it should be 	"inc((n-1) k ) +1" instead of 	
+  "k+(inc(n-1)) +1".
+
+2.File "COMP302/hw1-fixme.ml", line 30, characters 14-28:
+  Error: This expression has type float but an expression was expected 	 of type int
+  Here we know n is an int and since the function is recursive, we    	need every returned value to be of type int and not float. So we    	replace "1.0" by "1".
+
+
+
+
+Run-time Errors :
+1.
+
+
+2.
