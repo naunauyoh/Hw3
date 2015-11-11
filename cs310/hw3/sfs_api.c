@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <time.h>
+
+#include "disk_emu.c"
 
 
 super_block sb; 
@@ -109,24 +112,54 @@ void read_bitmap(){
 }
 
 int unvalid_name_check(char * name){
-	int i, dot_index = -1, end_index = 0; 
+	int i, dot_index = -1, end_index = 0, length; 
 	
 	if( name == NULL )  return 1; 			// Check the validity of name as a string of at least 1 char  
 	if( strlen(name) == 0 || strlen(name) > 20 ) return 1;	// and at most 20 chars
-	
-	for(i = 0; i<strlen(name); i++ ){	//check the length of the prefix, suffix and if there is multiple dots
+	length = strlen(name); 
+	for(i = 0; i<length; i++ ){	//check the length of the prefix, suffix and if there is multiple dots
 		if(name[i] == '.'){
 			if(dot_index != -1)			
 				return 1; 
 			dot_index = i; 
 		}
-		end_index++; 
+		end_index = i; 
 	}
 	if(dot_index > 17)
 		return 1; 
-	if(end_index - dot_index > 3)
+	if(dot_index !=-1 && end_index - dot_index > 3)
 		return 1; 
 	return 0; 	 
+}
+
+int write_root(){
+	int i,j;
+	directory buf[21]; 
+	for(i = 1; i<6; i++){
+		for(j = 0; j<21; j++){
+			if(i==5 && j==17)
+				break; 
+			buf[j] = root[j*i];
+		}
+		write_blocks(i+19,1,buf);  
+	}
+	return 0; 
+}
+
+int read_root(){
+	int i, j; 
+	directory buf[21]; 
+	for(i = 1; i<6; i++){
+			read_blocks(i+19,1,buf); 
+			for (j = 0; j < 21; j++)
+			{
+				if(i==5 && j==17)
+					break;
+				root[i*j] = buf[j]; 
+			}
+	}
+	return 0; 
+
 }
 
 void mksfs(int fresh) {
@@ -152,7 +185,7 @@ void mksfs(int fresh) {
 		printf("inode table init\n");
 		add_root_dir_inode();
 		write_inode_table(); 
-		write_blocks(20,1,&root);		//modify this 
+		write_root(); 		//modify this 
 		
 		/* bitmap init and add*/
 		printf("bitmap init\n");
@@ -171,7 +204,7 @@ void mksfs(int fresh) {
 	else{
 		init_disk(DISK_FILE, BLOCK_SIZE, BLOCK_NUM); 
 		read_blocks(0,1,&sb); 		//getting superblock
-		read_blocks(20,1,&root);	//getting root
+		read_root();				//getting root
 		read_inode_table();			//getting inode_table		
 		read_bitmap(); 				//getting bitmap
 	}
@@ -211,19 +244,25 @@ int sfs_getfilesize(const char* path) {
 int sfs_fopen(char *name) {
 	int i, check = 0, index;
 	int inode_num = 0;  
-	if(unvalid_name_check(name)) return 1 ; // checking for name validity (prefix of length <=16, one '.'' , suffix of length <= 3 ) 
-
-	for(i = 0; i<100; i++){					//checking if the file exists
+	if(unvalid_name_check(name)){
+		 printf("unvalid name \n"); 
+		 return -1 ; // checking for name validity (prefix of length <=16, one '.'' , suffix of length <= 3 ) 
+	}	 
+	
+	for(i = 0; i<100; i++){				//checking if the file exists
 		if(!strcmp(root[i].filename,name)){
 			inode_num = root[i].inode;
 			break; 
 		}
 	}
-								//if it indeed already exist
-	if(inode_num){ 
+
+	//if it indeed already exist
+	
+	if(inode_num != 0){ 
 		for(i = 0; i<100; i++){		//check whether it is already opened or not
 			if( fd_table[i].inode_idx == inode_num){
-					return i; 		/* if already opened then return its index */ 
+
+					return i; 	/* if already opened then return its index */ 
 			}
 		}
 								/* now check if there is an available */
@@ -235,6 +274,7 @@ int sfs_fopen(char *name) {
 				fd_table[i].rd_write_ptr = inode_table[inode_num].size ;
 				inode_table[inode_num].link_cnt = 1;
 				check = 1;
+
 				return i; 
 				break; 
 			}
@@ -242,7 +282,7 @@ int sfs_fopen(char *name) {
 		//if open file descriptor is full, notify the user and return 
 		if(!check){
 			printf("Too much opened files, close one first\n"); 
-			return 1; 
+			return -1; 
 		}
 
 	}
@@ -252,13 +292,14 @@ int sfs_fopen(char *name) {
 			if(fd_table[i].inode_idx == 0){
 				index = i;  
 				check = 1; 
+ 
 				break; 
 			}
 		}
 		//if open file descriptor is full, notify the user and return 
 		if(!check){			
 			printf("Too much opened files, close one first\n"); 
-			return 1; 
+			return -1; 
 		}
 
 		check = 0; 
@@ -271,49 +312,51 @@ int sfs_fopen(char *name) {
 				inode_table[i].size 	= 0;
 				//we do not modify the pointers to block;
 				fd_table[index].inode_idx = i ; 
+
 				fd_table[index].rd_write_ptr = 0;
 				write_inode_table(); 
-				check =1;  
+				check = 1;  
 				break; 
 			}
 		}						/* if no available inodes, return 1 */
 		if(!check){			
 			printf("Too much inode used, delete a file first\n"); 
-			return 1; 
+			return -1; 
 		}
 
-		check =0; 					/* check for available index in root */
+		check =0; 								/* check for available index in root */
 		for (i = 0; i <  100; i++){ 			/* if available then add to root */ 
 			if(root[i].inode == 0){
 				root[i].inode = fd_table[index].inode_idx; 
 				strcpy(root[i].filename,name);
-				check =1; 
+				write_root(); 
+				check =1;  
 				break;
 			}
 		}
 		if(!check){						
 			printf("No more indexes in root dir, delete a file first\n"); 
-			return 1; 
+			return -1; 
 		}
 	}
-	return 0;
+	return index;
 }
 
 int sfs_fclose(int fileID){
 	int inode_num;
 
-	if(fileID < 0 || fileID 100)	/* checking for valid input */
+	if(fileID < 0 || fileID  > 100)	/* checking for valid input */
 		return 1; 
 
 	inode_num = fd_table[fileID].inode_idx; 
 	if(!inode_num) return 1; 		/* if the selected fd entry is not open just return*/
 
 	fd_table[fileID].inode_idx = 0; 	/* set fd table entry to default*/
-	fd_table[fileID].rd_write_ptr =0;
+	fd_table[fileID].rd_write_ptr = 0;
+/*
+	inode_table[inode_num].link_cnt = 0;  set the number of link to the inode to 0
 
-	inode_table[inode_num].link_cnt = 0; /* set the number of link to the inode to 0*/
-
-	//write_inode_by_index(inode_num); 
+	//write_inode_by_index(inode_num); */
 	return 0;
 }
 
@@ -322,110 +365,115 @@ int sfs_fread(int fileID, char *buf, int length){
 	char temp[BLOCK_SIZE];
 	int indirect[BLOCK_SIZE/sizeof(int)]; 
 
-	if(fileID < 0 || fileID 100)	/* checking for valid input */
-		return 1; 
+	if(fileID < 0 || fileID  > 100)	/* checking for valid input */
+		return 0; 
 
 
-	if(fd_table[fileID].inode_idx == 0 || 
-		buf==NULL || length < 0 ){			/* checking if file is opened in fd_table, */
-		 return 1 ; 						/*  and incorrect inputs */ 
+	if(fd_table[fileID].inode_idx == 0 || length < 0 ){			/* checking if file is opened in fd_table, */
+		 return 0; 						/*  and incorrect inputs */ 
 	}
 
 	inode_num = fd_table[fileID].inode_idx; 
 	rw_ptr = fd_table[fileID].rd_write_ptr;  
 
-	if(rw_ptr + length > inode_table[inode_num].size){			//Modify length if necessary	
+	if(rw_ptr + length >= inode_table[inode_num].size){			//Modify length if necessary	
 		printf("The length is too long we will read until EOF\n");
 		length = inode_table[inode_num].size - rw_ptr;   
 	}
 
-	block_num = rw_ptr/BLOCK_SIZE % 13;		/* getting the block we have to start at */
+	block_num = rw_ptr/BLOCK_SIZE ;		/* getting the block we have to start at */
 	data_ptr = rw_ptr % BLOCK_SIZE; 		/* getting the pointer to where to start in the block */
 	filled = 0; 							/* get track of how much data (in bytes) have been read */
 	
 	while(length > 0 ){
 		if(block_num > 139){
 			printf("file is too long\n"); 
-			return 1 ;
+			return 0;
 		}
-		else if(block_num < 13){					/* if the block is directly pointed */ 
+		else if(block_num < 12){					/* if the block is directly pointed */ 
 			block_ptr = inode_table[inode_num].pointer[block_num]; 
 			read_blocks(block_ptr, 1, temp);
-			added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) );  
-			memcpy(buf+filled, temp + data_ptr, added);	//read into the buffer without erasing what was added before
+			added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) ); 
+			/*printf("filled : %d ; data_ptr : %d, added : %d, length : %d\n", filled, data_ptr,added, length );   
+			printf("read string : %s\n", buf);  */
+			strncpy(buf+filled, temp+data_ptr, added);	//read into the buffer without erasing what was added before
 			filled += added ; 
-			length -= added ;
 			if(added == length)
 				data_ptr += length; 
 			else 
-				data_ptr = 0;  
+				data_ptr = 0;
+/*			printf("length : %d , added : %d, data_ptr : %d\n", length, added, data_ptr );  
+*/			length -= added ;
+/*			printf("length : %d , added : %d, data_ptr : %d\n\n", length, added, data_ptr ); 
+*/			
 			block_num++;  
 		}
-		else{								/* If the block is part of the undirectly pointed blocks */ 
-			block_ptr = inode_table[inode_num].pointer[block_num]; //get the block of pointers
+		else{									/* If the block is part of the undirectly pointed blocks */ 
+			block_ptr = inode_table[inode_num].pointer[12]; //get the block of pointers
 			read_blocks(block_ptr, 1, indirect);
-			block_num -= 13; 				/* getting where the block is */ 
+			block_num -= 12; 				/* getting where the block is */ 
 			block_ptr = indirect[block_num]; 
 			read_blocks(block_ptr, 1, temp);
 			added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) );  
-			memcpy(buf+filled, temp + data_ptr, added);	//read into the buffer without erasing what was added before
+			strncpy(buf+filled, temp + data_ptr, added  );	//read into the buffer without erasing what was added before
 			filled += added ; 
-			length -= added ;
 			if(added == length)
 				data_ptr += length; 
 			else 
 				data_ptr = 0; 
+			length -= added ;
 			block_num++;  
 		}	
 	}
-	return 0;
+	fd_table[fileID].rd_write_ptr = fd_table[fileID].rd_write_ptr + filled; 
+	return filled;
 }
 
 
 int sfs_fwrite(int fileID, const char *buf, int length){
-	int rw_ptr, block_num, data_ptr, inode_num, filled,block_ptr, added; 
+	int rw_ptr, block_num, data_ptr, inode_num, filled ,block_ptr, added; 
 	int free_idx = -1; 
 	int indirect_idx = -1;
 	int i; 
 	char temp[BLOCK_SIZE]; 
 	int indirect[BLOCK_SIZE/sizeof(int)]; 
 
-	if(fileID < 0 || fileID 100)	/* checking for valid input */
+
+	  
+	if(fileID < 0 || fileID > 100){	/* checking for valid input */
+		printf("exit\n"); 
 		return 1; 
+	}
 
 	if(fd_table[fileID].inode_idx == 0 || 
 		length < 0 ){			/* checking if file is opened in fd_table, */
+		 printf("exit\n"); 
 		 return 1 ; 						/*  and incorrect inputs */ 
 	}
 
 	inode_num = fd_table[fileID].inode_idx; 
 	rw_ptr = fd_table[fileID].rd_write_ptr;  
 
-	if(rw_ptr + length > inode_table[inode_num].size){			//Modify length if necessary	
-		printf("The length is too long we will write until EOF\n");
-		length = inode_table[inode_num].size - rw_ptr;   
-	}
-
-	block_num = rw_ptr/BLOCK_SIZE % 13;		/* getting the block we have to start at */
+	block_num = rw_ptr/BLOCK_SIZE ;			/* getting the block we have to start at */
 	data_ptr = rw_ptr % BLOCK_SIZE; 		/* getting the pointer to where to start in the block */
 	filled = 0; 							/* get track of how much data (in bytes) have been read */
 	
-	while(length > 13){
+	while(length > 0){
 		if(block_num > 139){
 			printf("file is too long\n"); 
 			return 1 ;
 		}
-		else if(block_num < 13){
+		else if(block_num < 12){
 			if((block_ptr = inode_table[inode_num].pointer[block_num]) == 0){	//if need to write to a new block 
 				for(i = 0; i<6000 ; i++){
 					if(freeblocks[i] ==  0){
-						free_idx == i ; 
+						free_idx = i ; 
 						freeblocks[i] = 1;
 						break;
 					}
 				}
 				if(free_idx == -1){
-					printf("No more blocks available (indirect)\n");
+					printf("No more blocks available (direct)\n");
 					return 1; 
 				}
 				block_ptr = free_idx; 
@@ -433,21 +481,21 @@ int sfs_fwrite(int fileID, const char *buf, int length){
 			}
 			read_blocks(block_ptr, 1, temp);
 			added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) );  
-			memcpy(temp + data_ptr, buf+filled,  added);	//read into the buffer without erasing what was added before
-			write_blocks(block_ptr, 1, buf); 
-			filled += added ; 
-			length -= added ;
+			strncpy(temp + data_ptr, buf+filled, added);	//read into the buffer without erasing what was added before
+			write_blocks(block_ptr, 1, temp); 
+			filled += added; 
 			if(added == length)
 				data_ptr += length; 
 			else 
-				data_ptr = 0; 
+				data_ptr = 0;
+			length -= added ;
 			block_num++;  
 		}
 		else{
-			if((block_ptr = inode_table[inode_num].pointer[block_num]) == 0){	//if need to write to a new block 
+			if((block_ptr = inode_table[inode_num].pointer[12]) == 0){	//if need to write to a new block 
 				for(i = 0; i<6000 ; i++){
 					if(freeblocks[i] ==  0){			//look for a new block for
-						indirect_idx == i ; 			//block pointers\
+						indirect_idx = i ; 				//block pointers
 						freeblocks[i] = 1; 
 						break;
 					}
@@ -456,39 +504,74 @@ int sfs_fwrite(int fileID, const char *buf, int length){
 					printf("No more blocks available (for block of block_ptr )\n");
 					return 1; 
 				}
-				inode_table[inode_num].pointer[block_num] = indirect_idx; 
+				inode_table[inode_num].pointer[block_num] = indirect_idx; //save the pointer value in the inode
 				for(i = 0; i<6000 ; i++){
 					if(freeblocks[i] ==  0){
-						free_idx == i ; 
+						free_idx = i ; 
 						freeblocks[i] = 1;
 						break;
 					}
 				}
-				if(indirect_idx == -1){
+				if(free_idx == -1){
 					printf("No more blocks available (for block_ptr in block)\n");
 					return 1; 
 				}
-				read_blocks(indirect_idx, 1, indirect); 
+				read_blocks(indirect_idx, 1, indirect); 	//save the block in the block of pointer
 				indirect[0] = free_idx; 
-				write
+				write_blocks(indirect_idx, 1, indirect); 
+				block_ptr = free_idx;
+				read_blocks(block_ptr, 1, temp);
+				added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) );  
+				strncpy(temp + data_ptr, buf+filled,  added);	//read into the buffer without erasing what was added before
+				write_blocks(block_ptr, 1, temp); 
+				filled += added ; 
+				if(added == length)
+					data_ptr += length; 
+				else 
+					data_ptr = 0;
+				length -= added ; 
+				block_num++;
 			}
 			else{
-
+				read_blocks(block_ptr,1, indirect);
+				if(indirect[block_num-12] == 0){		//if writing in a new block 
+					for(i = 0; i<6000 ; i++){
+						if(freeblocks[i] ==  0){
+							free_idx = i ; 
+							freeblocks[i] = 1;
+						break;
+						}
+					}
+					if(free_idx == -1){
+						printf("No more blocks available (for block_ptr in block)\n");
+						return 1; 
+					}
+					indirect[block_num-12] = free_idx;
+					write_blocks(indirect_idx, 1, indirect); //upddate the undirect block
+				}
+				block_ptr = indirect[block_num-12]; 
+				read_blocks(block_ptr, 1, temp);
+				added = (BLOCK_SIZE - data_ptr > length ? length : (BLOCK_SIZE - data_ptr) );  
+				strncpy(temp + data_ptr, buf+filled,  added);	//read into the buffer without erasing what was added before
+				write_blocks(block_ptr, 1, temp); 
+				filled += added ; 
+				if(added == length)
+					data_ptr += length; 
+				else 
+					data_ptr = 0;
+				length -= added ; 
+				block_num++;	
 			}
 		}
-
-
-
-
 	}
-
-	
-	return 0;
+	fd_table[fileID].rd_write_ptr = fd_table[fileID].rd_write_ptr + filled;  
+	inode_table[inode_num].size = inode_table[inode_num].size + filled; 
+	return filled;
 }
 
 int sfs_fseek(int fileID, int loc){
 
-	if(fileID < 0 || fileID 100)	/* checking for valid input */
+	if(fileID < 0 || fileID > 100)	/* checking for valid input */
 		return 1; 
 
 	if(fd_table[fileID].inode_idx == 0 || loc < 0 || loc >= 71680)	//check if file is opened
@@ -500,10 +583,10 @@ int sfs_fseek(int fileID, int loc){
 }
 
 int sfs_remove(char *file) {
-	int file_index = -1, fd_index = -1, inode_idx ; 
+	int file_index = -1, fd_index = -1, inode_idx , to_free; 
 	int i ; 
 	int nulbuffer[BLOCK_SIZE/sizeof(int)]; 
-	int temp[BLOCK_SIZE/sizeof(int)]; 
+	int indirect[BLOCK_SIZE/sizeof(int)]; 
 	memset(nulbuffer, 0 , BLOCK_SIZE); 
 
 	if(unvalid_name_check(file)) return 1; 		//Check validity of name
@@ -536,15 +619,160 @@ int sfs_remove(char *file) {
 			inode_table[inode_idx].pointer[i] = 0;  
 		}
 	}
-	read_blocks(inode_table[inode_idx].pointer[13], 1, temp); 
-	for(i = 0; i<sizeof(temp); i++){
-		write_blocks(temp[i], 1, nulbuffer);
-		freeblocks[temp[i]] = 0; 
+	read_blocks(inode_table[inode_idx].pointer[12], 1, indirect); 
+	for(i = 0; i<BLOCK_SIZE/sizeof(int); i++){
+		if(indirect[i] == 0){
+			break; 
+		}
+		to_free = indirect[i];
+		write_blocks(indirect[i], 1, nulbuffer);
+		freeblocks[to_free] = 0; 
 	}
-	inode_table[inode_idx].pointer[13] = 0; 
+	inode_table[inode_idx].pointer[12] = 0; 
 
 	root[file_index].inode = 0; 
 	memset(root[file_index].filename, 0, 20*sizeof(char));
-
+	write_bitmap(); 
 	return 0;
 }
+
+/*void generate(char * buf, int size)
+{	
+	time_t t;
+	srand((unsigned) time(&t));
+	for(int i = 0; i < size; i++)
+		*(buf + i) = rand()%26 + 97;
+	*(buf + size) = NULL;
+}*/
+ 
+int main(){
+	//for now on read does not work rest of it works. 
+	int i , rindex; 
+	mksfs(1); 
+
+	sfs_fopen("coucou.txt"); 
+	sfs_fopen("connard.ca"); 
+	printf("%d\n",fd_table[0].inode_idx  );
+	printf("%d\n",fd_table[1].inode_idx  );
+	char longs[17000];
+	for(i = 0 ; i<17000; i++){
+		if(i % 1 == 0) longs[i] = 'a';  
+		if(i % 2 == 0) longs[i] = 'b';
+		if(i % 3 == 0) longs[i] = 'c'; 
+	}
+	sfs_fwrite(0 , longs, 17000);
+	sfs_fwrite(1 , "salaud", 50);
+	sfs_fseek(0, 0); 
+	sfs_fwrite(1, "mal", 9);  
+	char *string = malloc(10000*sizeof(char)); 
+
+	sfs_fread(0, string, 2000);
+
+	sfs_fclose(0); 
+	sfs_fwrite(0, "salut", 5); 
+
+	sfs_remove("coucou.txt"); 
+
+	for(i =0; i<100  ;i++ ){
+		if(!strcmp(root[i].filename,"coucou.txt")){
+			printf("file found!\n"); 
+			rindex = i; 
+		}
+		if(!strcmp(root[i].filename,"connard.ca")){
+			printf("file found!\n"); 
+			rindex = i; 
+		} 
+	}
+
+}
+
+	/*printf("%d\n",(sizeof(struct directory) + BLOCK_SIZE -1)/BLOCK_SIZE, 1);
+	mksfs(1);
+	int ID = sfs_fopen("TESTEDSFDSDSD.CSD");
+	int ID2 = sfs_fopen("TESTEDSFDSDsdd.CSD");
+	int max_size = 30000;
+	int size = 0;
+	int random = 0;
+	char * test = (char *)malloc(30000);
+	char * written = (char *)malloc(30000);
+	char * test2 = (char *)malloc(30000);
+	char * written2 = (char *)malloc(30000);
+	int iteration = 0;
+	generate(test, 30000);
+	
+	int increment = 0;
+	int NO = 0;
+	int size2 = 0;
+	while(size < max_size - 2000){
+
+		increment -= rand()%7;
+		random = rand() %(2000 - increment);
+		NO = sfs_fwrite(ID, test + size, random);
+		if(NO != random)
+		{
+			printf("FAILURE AT %d\n", size);
+		}
+		size += random;
+	}
+
+	while(size2 < max_size - 2000){
+
+		random = rand() %(2000);
+		NO = sfs_fwrite(ID2, test2 + size2, random);
+		if(NO != random)
+		{
+			printf("FAILURE AT %d\n", size2);
+		}
+		size2 += random;
+	}
+		
+	sfs_fclose(ID2);	
+	int readSize = 0;
+	int readSize2 = 0;
+	while(readSize < size)
+	{
+		random = rand() %(2000);
+		NO = sfs_fread(ID, written+readSize, random);
+		if(NO != random)
+		{
+			printf("FAILURE AT %d\n", readSize);
+			break;
+		}
+		
+			readSize += random;
+	}
+	sfs_fclose(ID);
+	for(int i = 0; i < readSize; i++)
+	{
+		if(test[i] != written[i])
+		{
+			printf("CRITICAL FAILURE AT LINE %d\n", i);
+			break;
+		}
+	}
+	sfs_fopen("TESTEDSFDSDsdd.CSD");
+
+	while(readSize2 < size2)
+	{
+		random = rand() %(2000);
+		NO = sfs_fread(ID2, written2+readSize2, random);
+		if(NO != random)
+		{
+			printf("FAILURE AT %d\n", readSize2);
+			break;
+		}
+		else
+			readSize2 += random;
+		
+	}
+
+	for(int i = 0; i < readSize2; i++)
+	{
+		if(test2[i] != written2[i])
+		{
+			printf("CRITICAL FAILURE AT LINE %d\n", i);
+			break;
+		}
+	}
+*/
+
